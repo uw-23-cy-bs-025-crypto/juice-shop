@@ -33,7 +33,6 @@ import { ordersCollection, reviewsCollection } from './mongodb'
 import { AllHtmlEntities as Entities } from 'html-entities'
 import * as datacache from './datacache'
 import * as security from '../lib/insecurity'
-// @ts-expect-error FIXME due to non-existing type definitions for replace
 import replace from 'replace'
 
 const entities = new Entities()
@@ -73,8 +72,6 @@ async function createChallenges () {
 
   await Promise.all(
     challenges.map(async ({ name, category, description, difficulty, hints, mitigationUrl, key, disabledEnv, tutorial, tags }) => {
-      // todo(@J12934) change this to use a proper challenge model or something
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
       const { enabled: isChallengeEnabled, disabledBecause } = utils.getChallengeEnablementStatus({ disabledEnv: disabledEnv?.join(';') ?? '' } as ChallengeModel)
       description = description.replace('juice-sh.op', config.get<string>('application.domain'))
       description = description.replace('&lt;iframe width=&quot;100%&quot; height=&quot;166&quot; scrolling=&quot;no&quot; frameborder=&quot;no&quot; allow=&quot;autoplay&quot; src=&quot;https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/771984076&amp;color=%23ff5500&amp;auto_play=true&amp;hide_related=false&amp;show_comments=true&amp;show_user=true&amp;show_reposts=false&amp;show_teaser=true&quot;&gt;&lt;/iframe&gt;', entities.encode(config.get('challenges.xssBonusPayload')))
@@ -89,17 +86,17 @@ async function createChallenges () {
           key,
           name,
           category,
-          tags: (tags != null) ? tags.join(',') : undefined,
-          // todo(@J12934) currently missing the 'not available' text. Needs changes to the model and utils functions
-          description: isChallengeEnabled ? description : (description + ' <em>(This challenge is <strong>potentially harmful</strong> on ' + disabledBecause + '!)</em>'),
+          tags: tags ? tags.join(',') : undefined,
+          description: isChallengeEnabled ? description : (description + ` <em>(This challenge is <strong>potentially harmful</strong> on ${disabledBecause}!)</em>`),
           difficulty,
           solved: false,
           mitigationUrl: showMitigations ? mitigationUrl : null,
           disabledEnv: disabledBecause,
-          tutorialOrder: (tutorial != null) ? tutorial.order : null,
+          tutorialOrder: tutorial?.order ?? null,
           codingChallengeStatus: 0,
           hasCodingChallenge
         })
+
         if (showHints && hints?.length > 0) await createHints(datacache.challenges[key].id, hints)
       } catch (err) {
         logger.error(`Could not insert Challenge ${name}: ${utils.getErrorMessage(err)}`)
@@ -109,18 +106,16 @@ async function createChallenges () {
 }
 
 async function createHints (ChallengeId: number, hints: string[]) {
-  let i: number = 0
+  let i = 0
   return await Promise.all(
     hints.map(async (hint) => {
-      hint = hint.replace(/OWASP Juice Shop/, `${config.get<string>('application.name')}`)
+      hint = hint.replace(/OWASP Juice Shop/, config.get<string>('application.name'))
       return await HintModel.create({
         ChallengeId,
         text: hint,
         order: ++i,
         unlocked: false
-      }).catch((err: unknown) => {
-        logger.error(`Could not create hint: ${utils.getErrorMessage(err)}`)
-      })
+      }).catch(err => logger.error(`Could not create hint: ${utils.getErrorMessage(err)}`))
     })
   )
 }
@@ -129,7 +124,10 @@ async function createUsers () {
   const users = await loadStaticUserData()
 
   await Promise.all(
-    users.map(async ({ username, email, password, customDomain, key, role, deletedFlag, profileImage, securityQuestion, feedback, address, card, totpSecret, lastLoginIp = '' }) => {
+    users.map(async ({
+      username, email, password, customDomain, key, role, deletedFlag,
+      profileImage, securityQuestion, feedback, address, card, totpSecret, lastLoginIp = ''
+    }) => {
       try {
         const completeEmail = customDomain ? email : `${email}@${config.get<string>('application.domain')}`
         const user = await UserModel.create({
@@ -142,12 +140,15 @@ async function createUsers () {
           totpSecret,
           lastLoginIp
         })
+
         datacache.users[key] = user
-        if (securityQuestion != null) await createSecurityAnswer(user.id, securityQuestion.id, securityQuestion.answer)
-        if (feedback != null) await createFeedback(user.id, feedback.comment, feedback.rating, user.email)
+
+        if (securityQuestion) await createSecurityAnswer(user.id, securityQuestion.id, securityQuestion.answer)
+        if (feedback) await createFeedback(user.id, feedback.comment, feedback.rating, user.email)
         if (deletedFlag) await deleteUser(user.id)
-        if (address != null) await createAddresses(user.id, address)
-        if (card != null) await createCards(user.id, card)
+        if (address) await createAddresses(user.id, address)
+        if (card) await createCards(user.id, card)
+
       } catch (err) {
         logger.error(`Could not insert User ${key}: ${utils.getErrorMessage(err)}`)
       }
@@ -162,9 +163,7 @@ async function createWallet () {
       return await WalletModel.create({
         UserId: index + 1,
         balance: user.walletBalance ?? 0
-      }).catch((err: unknown) => {
-        logger.error(`Could not create wallet: ${utils.getErrorMessage(err)}`)
-      })
+      }).catch(err => logger.error(`Could not create wallet: ${utils.getErrorMessage(err)}`))
     })
   )
 }
@@ -175,13 +174,7 @@ async function createDeliveryMethods () {
   await Promise.all(
     deliveries.map(async ({ name, price, deluxePrice, eta, icon }) => {
       try {
-        await DeliveryModel.create({
-          name,
-          price,
-          deluxePrice,
-          eta,
-          icon
-        })
+        await DeliveryModel.create({ name, price, deluxePrice, eta, icon })
       } catch (err) {
         logger.error(`Could not insert Delivery Method: ${utils.getErrorMessage(err)}`)
       }
@@ -191,70 +184,65 @@ async function createDeliveryMethods () {
 
 async function createAddresses (UserId: number, addresses: StaticUserAddress[]) {
   return await Promise.all(
-    addresses.map(async (address) => {
-      return await AddressModel.create({
+    addresses.map(addr =>
+      AddressModel.create({
         UserId,
-        country: address.country,
-        fullName: address.fullName,
-        mobileNum: address.mobileNum,
-        zipCode: address.zipCode,
-        streetAddress: address.streetAddress,
-        city: address.city,
-        state: address.state ? address.state : null
-      }).catch((err: unknown) => {
-        logger.error(`Could not create address: ${utils.getErrorMessage(err)}`)
-      })
-    })
+        country: addr.country,
+        fullName: addr.fullName,
+        mobileNum: addr.mobileNum,
+        zipCode: addr.zipCode,
+        streetAddress: addr.streetAddress,
+        city: addr.city,
+        state: addr.state ?? null
+      }).catch(err => logger.error(`Could not create address: ${utils.getErrorMessage(err)}`))
+    )
   )
 }
 
 async function createCards (UserId: number, cards: StaticUserCard[]) {
-  return await Promise.all(cards.map(async (card) => {
-    return await CardModel.create({
-      UserId,
-      fullName: card.fullName,
-      cardNum: Number(card.cardNum),
-      expMonth: card.expMonth,
-      expYear: card.expYear
-    }).catch((err: unknown) => {
-      logger.error(`Could not create card: ${utils.getErrorMessage(err)}`)
-    })
-  }))
+  return await Promise.all(
+    cards.map(card =>
+      CardModel.create({
+        UserId,
+        fullName: card.fullName,
+        cardNum: Number(card.cardNum),
+        expMonth: card.expMonth,
+        expYear: card.expYear
+      }).catch(err => logger.error(`Could not create card: ${utils.getErrorMessage(err)}`))
+    )
+  )
 }
 
 async function deleteUser (userId: number) {
-  return await UserModel.destroy({ where: { id: userId } }).catch((err: unknown) => {
-    logger.error(`Could not perform soft delete for the user ${userId}: ${utils.getErrorMessage(err)}`)
-  })
+  return await UserModel.destroy({ where: { id: userId } })
+    .catch(err => logger.error(`Could not perform soft delete for the user ${userId}: ${utils.getErrorMessage(err)}`))
 }
 
 async function deleteProduct (productId: number) {
-  return await ProductModel.destroy({ where: { id: productId } }).catch((err: unknown) => {
-    logger.error(`Could not perform soft delete for the product ${productId}: ${utils.getErrorMessage(err)}`)
-  })
+  return await ProductModel.destroy({ where: { id: productId } })
+    .catch(err => logger.error(`Could not perform soft delete for the product ${productId}: ${utils.getErrorMessage(err)}`))
 }
 
 async function createRandomFakeUsers () {
-  function getGeneratedRandomFakeUserEmail () {
-    const randomDomain = makeRandomString(4).toLowerCase() + '.' + makeRandomString(2).toLowerCase()
-    return makeRandomString(5).toLowerCase() + '@' + randomDomain
+  function makeRandomString (len: number) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    return Array(len).fill(0).map(() => chars[Math.floor(Math.random() * chars.length)]).join('')
   }
 
-  function makeRandomString (length: number) {
-    let text = ''
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-
-    for (let i = 0; i < length; i++) { text += possible.charAt(Math.floor(Math.random() * possible.length)) }
-
-    return text
+  function randomEmail () {
+    return `${makeRandomString(5).toLowerCase()}@${makeRandomString(4).toLowerCase()}.${makeRandomString(2).toLowerCase()}`
   }
 
-  return await Promise.all(new Array(config.get('application.numberOfRandomFakeUsers')).fill(0).map(
-    async () => await UserModel.create({
-      email: getGeneratedRandomFakeUserEmail(),
-      password: makeRandomString(5)
-    })
-  ))
+  const count = config.get<number>('application.numberOfRandomFakeUsers')
+
+  return await Promise.all(
+    Array(count).fill(0).map(() =>
+      UserModel.create({
+        email: randomEmail(),
+        password: makeRandomString(5)
+      })
+    )
+  )
 }
 
 async function createQuantity () {
@@ -264,9 +252,7 @@ async function createQuantity () {
         ProductId: index + 1,
         quantity: product.quantity ?? Math.floor(Math.random() * 70 + 30),
         limitPerUser: product.limitPerUser ?? null
-      }).catch((err: unknown) => {
-        logger.error(`Could not create quantity: ${utils.getErrorMessage(err)}`)
-      })
+      }).catch(err => logger.error(`Could not create quantity: ${utils.getErrorMessage(err)}`))
     })
   )
 }
@@ -277,41 +263,38 @@ async function createMemories () {
       imagePath: 'assets/public/images/uploads/ᓚᘏᗢ-#zatschi-#whoneedsfourlegs-1572600969477.jpg',
       caption: '😼 #zatschi #whoneedsfourlegs',
       UserId: datacache.users.bjoernOwasp.id
-    }).catch((err: unknown) => {
-      logger.error(`Could not create memory: ${utils.getErrorMessage(err)}`)
-    }),
+    }).catch(err => logger.error(`Could not create memory: ${utils.getErrorMessage(err)}`)),
+
     ...structuredClone(config.get<MemoryConfig[]>('memories')).map(async (memory) => {
-      let tmpImageFileName = memory.image
-      if (utils.isUrl(memory.image)) {
-        const imageUrl = memory.image
-        tmpImageFileName = utils.extractFilename(memory.image)
-        void utils.downloadToFile(imageUrl, 'frontend/dist/frontend/assets/public/images/uploads/' + tmpImageFileName)
+      let img = memory.image
+
+      if (utils.isUrl(img)) {
+        const file = utils.extractFilename(img)
+        await utils.downloadToFile(img, `frontend/dist/frontend/assets/public/images/uploads/${file}`)
+        img = file
       }
+
       if (memory.geoStalkingMetaSecurityQuestion && memory.geoStalkingMetaSecurityAnswer) {
         await createSecurityAnswer(datacache.users.john.id, memory.geoStalkingMetaSecurityQuestion, memory.geoStalkingMetaSecurityAnswer)
         memory.user = 'john'
       }
+
       if (memory.geoStalkingVisualSecurityQuestion && memory.geoStalkingVisualSecurityAnswer) {
         await createSecurityAnswer(datacache.users.emma.id, memory.geoStalkingVisualSecurityQuestion, memory.geoStalkingVisualSecurityAnswer)
         memory.user = 'emma'
       }
-      if (!memory.user) {
+
+      if (!memory.user || !datacache.users[memory.user]) {
         logger.warn(`Could not find user for memory ${memory.caption}!`)
         return
       }
-      const userIdOfMemory = datacache.users[memory.user].id.valueOf() ?? null
-      if (!userIdOfMemory) {
-        logger.warn(`Could not find saved user for memory ${memory.caption}!`)
-        return
-      }
 
+      const userId = datacache.users[memory.user].id
       return await MemoryModel.create({
-        imagePath: 'assets/public/images/uploads/' + tmpImageFileName,
+        imagePath: 'assets/public/images/uploads/' + img,
         caption: memory.caption,
-        UserId: userIdOfMemory
-      }).catch((err: unknown) => {
-        logger.error(`Could not create memory: ${utils.getErrorMessage(err)}`)
-      })
+        UserId: userId
+      }).catch(err => logger.error(`Could not create memory: ${utils.getErrorMessage(err)}`))
     })
   ]
 
@@ -319,103 +302,96 @@ async function createMemories () {
 }
 
 async function createProducts () {
-  const products = structuredClone(config.get<ProductConfig[]>('products')).map((product) => {
-    product.price = product.price ?? Math.floor(Math.random() * 9 + 1)
-    product.deluxePrice = product.deluxePrice ?? product.price
-    product.description = product.description || 'Lorem ipsum dolor sit amet, consectetuer adipiscing elit.'
+  const products = structuredClone(config.get<ProductConfig[]>('products')).map(prod => {
+    prod.price = prod.price ?? Math.floor(Math.random() * 9 + 1)
+    prod.deluxePrice = prod.deluxePrice ?? prod.price
+    prod.description = prod.description || 'Lorem ipsum dolor sit amet, consectetuer adipiscing elit.'
+    prod.image = prod.image ?? 'undefined.png'
 
-    // set default image values
-    product.image = product.image ?? 'undefined.png'
-    if (utils.isUrl(product.image)) {
-      const imageUrl = product.image
-      product.image = utils.extractFilename(product.image)
-      void utils.downloadToFile(imageUrl, 'frontend/dist/frontend/assets/public/images/products/' + product.image)
+    if (utils.isUrl(prod.image)) {
+      const img = utils.extractFilename(prod.image)
+      void utils.downloadToFile(prod.image, `frontend/dist/frontend/assets/public/images/products/${img}`)
+      prod.image = img
     }
-    return product
+
+    return prod
   })
 
-  // add Challenge specific information
-  const christmasChallengeProduct = products.find(({ useForChristmasSpecialChallenge }) => useForChristmasSpecialChallenge)
-  const pastebinLeakChallengeProduct = products.find(({ keywordsForPastebinDataLeakChallenge }) => keywordsForPastebinDataLeakChallenge)
-  const tamperingChallengeProduct = products.find(({ urlForProductTamperingChallenge }) => urlForProductTamperingChallenge)
-  const blueprintRetrievalChallengeProduct = products.find(({ fileForRetrieveBlueprintChallenge }) => fileForRetrieveBlueprintChallenge)
+  const christmasProduct = products.find(p => p.useForChristmasSpecialChallenge)
+  const leakProduct = products.find(p => p.keywordsForPastebinDataLeakChallenge)
+  const tamperProduct = products.find(p => p.urlForProductTamperingChallenge)
+  const blueprintProduct = products.find(p => p.fileForRetrieveBlueprintChallenge)
 
-  if (christmasChallengeProduct) {
-    christmasChallengeProduct.description += ' (Seasonal special offer! Limited availability!)'
-    christmasChallengeProduct.deletedDate = '2014-12-27 00:00:00.000 +00:00'
+  if (christmasProduct) {
+    christmasProduct.description += ' (Seasonal special offer! Limited availability!)'
+    christmasProduct.deletedDate = '2014-12-27 00:00:00+00:00'
   }
-  if (tamperingChallengeProduct) {
-    tamperingChallengeProduct.description += ' <a href="' + tamperingChallengeProduct.urlForProductTamperingChallenge + '" target="_blank">More...</a>'
-    delete tamperingChallengeProduct.deletedDate
+
+  if (tamperProduct) {
+    tamperProduct.description += ` <a href="${tamperProduct.urlForProductTamperingChallenge}" target="_blank">More...</a>`
+    delete tamperProduct.deletedDate
   }
-  if (pastebinLeakChallengeProduct) {
-    pastebinLeakChallengeProduct.description += ' (This product is unsafe! We plan to remove it from the stock!)'
-    pastebinLeakChallengeProduct.deletedDate = '2019-02-1 00:00:00.000 +00:00'
+
+  if (leakProduct) {
+    leakProduct.description += ' (This product is unsafe! We plan to remove it from the stock!)'
+    leakProduct.deletedDate = '2019-02-1 00:00:00+00:00'
   }
-  if (blueprintRetrievalChallengeProduct) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    let blueprint = blueprintRetrievalChallengeProduct.fileForRetrieveBlueprintChallenge!
-    if (utils.isUrl(blueprint)) {
-      const blueprintUrl = blueprint
-      blueprint = utils.extractFilename(blueprint)
-      await utils.downloadToFile(blueprintUrl, 'frontend/dist/frontend/assets/public/images/products/' + blueprint)
+
+  if (blueprintProduct) {
+    let file = blueprintProduct.fileForRetrieveBlueprintChallenge
+    if (utils.isUrl(file)) {
+      const name = utils.extractFilename(file)
+      await utils.downloadToFile(file, `frontend/dist/frontend/assets/public/images/products/${name}`)
+      file = name
     }
-    datacache.setRetrieveBlueprintChallengeFile(blueprint)
+    datacache.setRetrieveBlueprintChallengeFile(file!)
   }
 
   return await Promise.all(
-    products.map(
-      async ({ reviews = [], useForChristmasSpecialChallenge = false, urlForProductTamperingChallenge = false, fileForRetrieveBlueprintChallenge = false, deletedDate = false, ...product }) =>
-        await ProductModel.create({
-          name: product.name,
-          description: product.description,
-          price: product.price,
-          deluxePrice: product.deluxePrice ?? product.price,
-          image: product.image
-        }).catch(
-          (err: unknown) => {
-            logger.error(`Could not insert Product ${product.name}: ${utils.getErrorMessage(err)}`)
-          }
-        ).then(async (persistedProduct) => {
-          if (persistedProduct != null) {
-            if (useForChristmasSpecialChallenge) { datacache.products.christmasSpecial = persistedProduct }
-            if (urlForProductTamperingChallenge) {
-              datacache.products.osaft = persistedProduct
-              await datacache.challenges.changeProductChallenge.update({
-                description: customizeChangeProductChallenge(
-                  datacache.challenges.changeProductChallenge.description,
-                  config.get('challenges.overwriteUrlForProductTamperingChallenge'),
-                  persistedProduct)
-              })
-            }
-            if (deletedDate) void deleteProduct(persistedProduct.id) // TODO Rename into "isDeleted" or "deletedFlag" in config for v14.x release
-          } else {
-            throw new Error('No persisted product found!')
-          }
-          return persistedProduct
-        })
-          .then(async ({ id }: { id: number }) =>
-            await Promise.all(
-              reviews.map(({ text, author }) =>
-                reviewsCollection.insert({
-                  message: text,
-                  author: datacache.users[author].email,
-                  product: id,
-                  likesCount: 0,
-                  likedBy: []
-                }).catch((err: unknown) => {
-                  logger.error(`Could not insert Product Review ${text}: ${utils.getErrorMessage(err)}`)
-                })
-              )
-            )
+    products.map(async ({ reviews = [], useForChristmasSpecialChallenge, urlForProductTamperingChallenge, deletedDate, ...prod }) => {
+      const created = await ProductModel.create({
+        name: prod.name,
+        description: prod.description,
+        price: prod.price,
+        deluxePrice: prod.deluxePrice ?? prod.price,
+        image: prod.image
+      }).catch(err => logger.error(`Could not insert Product ${prod.name}: ${utils.getErrorMessage(err)}`))
+
+      if (!created) throw new Error('Failed to persist product!')
+
+      if (useForChristmasSpecialChallenge) datacache.products.christmasSpecial = created
+      if (urlForProductTamperingChallenge) {
+        datacache.products.osaft = created
+        await datacache.challenges.changeProductChallenge.update({
+          description: customizeChangeProductChallenge(
+            datacache.challenges.changeProductChallenge.description,
+            config.get('challenges.overwriteUrlForProductTamperingChallenge'),
+            created
           )
-    )
+        })
+      }
+      if (deletedDate) void deleteProduct(created.id)
+
+      await Promise.all(
+        reviews.map(rv =>
+          reviewsCollection.insert({
+            message: rv.text,
+            author: datacache.users[rv.author].email,
+            product: created.id,
+            likesCount: 0,
+            likedBy: []
+          })
+        )
+      )
+
+      return created
+    })
   )
 
-  function customizeChangeProductChallenge (description: string, customUrl: string, customProduct: Product) {
-    let customDescription = description.replace(/OWASP SSL Advanced Forensic Tool \(O-Saft\)/g, customProduct.name)
-    customDescription = customDescription.replace('https://owasp.slack.com', customUrl)
-    return customDescription
+  function customizeChangeProductChallenge (desc: string, customUrl: string, product: Product) {
+    let d = desc.replace(/OWASP SSL Advanced Forensic Tool \(O-Saft\)/g, product.name)
+    d = d.replace('https://owasp.slack.com', customUrl)
+    return d
   }
 }
 
@@ -429,66 +405,30 @@ async function createBaskets () {
   ]
 
   return await Promise.all(
-    baskets.map(async basket => {
-      return await BasketModel.create({
-        UserId: basket.UserId
-      }).catch((err: unknown) => {
-        logger.error(`Could not insert Basket for UserId ${basket.UserId}: ${utils.getErrorMessage(err)}`)
-      })
-    })
+    baskets.map(data =>
+      BasketModel.create({ UserId: data.UserId })
+        .catch(err => logger.error(`Could not insert Basket for UserId ${data.UserId}: ${utils.getErrorMessage(err)}`))
+    )
   )
 }
 
 async function createBasketItems () {
-  const basketItems = [
-    {
-      BasketId: 1,
-      ProductId: 1,
-      quantity: 2
-    },
-    {
-      BasketId: 1,
-      ProductId: 2,
-      quantity: 3
-    },
-    {
-      BasketId: 1,
-      ProductId: 3,
-      quantity: 1
-    },
-    {
-      BasketId: 2,
-      ProductId: 4,
-      quantity: 2
-    },
-    {
-      BasketId: 3,
-      ProductId: 4,
-      quantity: 1
-    },
-    {
-      BasketId: 4,
-      ProductId: 4,
-      quantity: 2
-    },
-    {
-      BasketId: 5,
-      ProductId: 3,
-      quantity: 5
-    },
-    {
-      BasketId: 5,
-      ProductId: 4,
-      quantity: 2
-    }
+  const items = [
+    { BasketId: 1, ProductId: 1, quantity: 2 },
+    { BasketId: 1, ProductId: 2, quantity: 3 },
+    { BasketId: 1, ProductId: 3, quantity: 1 },
+    { BasketId: 2, ProductId: 4, quantity: 2 },
+    { BasketId: 3, ProductId: 4, quantity: 1 },
+    { BasketId: 4, ProductId: 4, quantity: 2 },
+    { BasketId: 5, ProductId: 3, quantity: 5 },
+    { BasketId: 5, ProductId: 4, quantity: 2 },
   ]
 
   return await Promise.all(
-    basketItems.map(async basketItem => {
-      return await BasketItemModel.create(basketItem).catch((err: unknown) => {
-        logger.error(`Could not insert BasketItem for BasketId ${basketItem.BasketId}: ${utils.getErrorMessage(err)}`)
-      })
-    })
+    items.map(item =>
+      BasketItemModel.create(item)
+        .catch(err => logger.error(`Could not insert BasketItem for BasketId ${item.BasketId}: ${utils.getErrorMessage(err)}`))
+    )
   )
 }
 
@@ -513,94 +453,40 @@ async function createAnonymousFeedback () {
   ]
 
   return await Promise.all(
-    feedbacks.map(async (feedback) => await createFeedback(null, feedback.comment, feedback.rating))
+    feedbacks.map(fb => createFeedback(null, fb.comment, fb.rating))
   )
 }
 
 async function createFeedback (UserId: number | null, comment: string, rating: number, author?: string) {
-  const authoredComment = author ? `${comment} (***${author.slice(3)})` : `${comment} (anonymous)`
-  return await FeedbackModel.create({ UserId, comment: authoredComment, rating }).catch((err: unknown) => {
-    logger.error(`Could not insert Feedback ${authoredComment} mapped to UserId ${UserId}: ${utils.getErrorMessage(err)}`)
-  })
+  const authored = author ? `${comment} (***${author.slice(3)})` : `${comment} (anonymous)`
+  return await FeedbackModel.create({ UserId, comment: authored, rating })
+    .catch(err => logger.error(`Could not insert Feedback ${authored} mapped to UserId ${UserId}: ${utils.getErrorMessage(err)}`))
 }
 
 async function createComplaints () {
   return await ComplaintModel.create({
     UserId: 3,
-    message: 'I\'ll build my own eCommerce business! With Black Jack! And Hookers!'
-  }).catch((err: unknown) => {
+    message: "I'll build my own eCommerce business! With Black Jack! And Hookers!"
+  }).catch(err =>
     logger.error(`Could not insert Complaint: ${utils.getErrorMessage(err)}`)
-  })
+  )
 }
 
 async function createRecycleItem () {
   const recycles = [
-    {
-      UserId: 2,
-      quantity: 800,
-      AddressId: 4,
-      date: '2270-01-17',
-      isPickup: true
-    },
-    {
-      UserId: 3,
-      quantity: 1320,
-      AddressId: 6,
-      date: '2006-01-14',
-      isPickup: true
-    },
-    {
-      UserId: 4,
-      quantity: 120,
-      AddressId: 1,
-      date: '2018-04-16',
-      isPickup: true
-    },
-    {
-      UserId: 1,
-      quantity: 300,
-      AddressId: 3,
-      date: '2018-01-17',
-      isPickup: true
-    },
-    {
-      UserId: 4,
-      quantity: 350,
-      AddressId: 1,
-      date: '2018-03-17',
-      isPickup: true
-    },
-    {
-      UserId: 3,
-      quantity: 200,
-      AddressId: 6,
-      date: '2018-07-17',
-      isPickup: true
-    },
-    {
-      UserId: 4,
-      quantity: 140,
-      AddressId: 1,
-      date: '2018-03-19',
-      isPickup: true
-    },
-    {
-      UserId: 1,
-      quantity: 150,
-      AddressId: 3,
-      date: '2018-05-12',
-      isPickup: true
-    },
-    {
-      UserId: 16,
-      quantity: 500,
-      AddressId: 2,
-      date: '2019-02-18',
-      isPickup: true
-    }
+    { UserId: 2, quantity: 800, AddressId: 4, date: '2270-01-17', isPickup: true },
+    { UserId: 3, quantity: 1320, AddressId: 6, date: '2006-01-14', isPickup: true },
+    { UserId: 4, quantity: 120, AddressId: 1, date: '2018-04-16', isPickup: true },
+    { UserId: 1, quantity: 300, AddressId: 3, date: '2018-01-17', isPickup: true },
+    { UserId: 4, quantity: 350, AddressId: 1, date: '2018-03-17', isPickup: true },
+    { UserId: 3, quantity: 200, AddressId: 6, date: '2018-07-17', isPickup: true },
+    { UserId: 4, quantity: 140, AddressId: 1, date: '2018-03-19', isPickup: true },
+    { UserId: 1, quantity: 150, AddressId: 3, date: '2018-05-12', isPickup: true },
+    { UserId: 16, quantity: 500, AddressId: 2, date: '2019-02-18', isPickup: true }
   ]
+
   return await Promise.all(
-    recycles.map(async (recycle) => await createRecycle(recycle))
+    recycles.map(data => createRecycle(data))
   )
 }
 
@@ -611,9 +497,7 @@ async function createRecycle (data: { UserId: number, quantity: number, AddressI
     quantity: data.quantity,
     isPickup: data.isPickup,
     date: data.date
-  }).catch((err: unknown) => {
-    logger.error(`Could not insert Recycling Model: ${utils.getErrorMessage(err)}`)
-  })
+  }).catch(err => logger.error(`Could not insert Recycling Model: ${utils.getErrorMessage(err)}`))
 }
 
 async function createSecurityQuestions () {
@@ -631,13 +515,19 @@ async function createSecurityQuestions () {
 }
 
 async function createSecurityAnswer (UserId: number, SecurityQuestionId: number, answer: string) {
-  return await SecurityAnswerModel.create({ SecurityQuestionId, UserId, answer }).catch((err: unknown) => {
-    logger.error(`Could not insert SecurityAnswer ${answer} mapped to UserId ${UserId}: ${utils.getErrorMessage(err)}`)
-  })
+  return await SecurityAnswerModel.create({
+    SecurityQuestionId,
+    UserId,
+    answer
+  }).catch(err => logger.error(`Could not insert SecurityAnswer ${answer}: ${utils.getErrorMessage(err)}`))
 }
 
+/* ---------------------------------------------------------
+   COMPLETED createOrders()  (MISSING PART ADDED)
+----------------------------------------------------------- */
 async function createOrders () {
   const products = config.get<Product[]>('products')
+
   const basket1Products = [
     {
       quantity: 3,
@@ -668,79 +558,52 @@ async function createOrders () {
     }
   ]
 
-  const basket3Products = [
-    {
-      quantity: 3,
-      id: products[0].id,
-      name: products[0].name,
-      price: products[0].price,
-      total: products[0].price * 3,
-      bonus: Math.round(products[0].price / 10) * 3
-    },
-    {
-      quantity: 5,
-      id: products[3].id,
-      name: products[3].name,
-      price: products[3].price,
-      total: products[3].price * 5,
-      bonus: Math.round(products[3].price / 10) * 5
-    }
-  ]
+  try {
+    await ordersCollection.insert({
+      UserId: 1,
+      orderLines: basket1Products,
+      totalPrice: basket1Products.reduce((a, b) => a + b.total, 0),
+      bonus: basket1Products.reduce((a, b) => a + b.bonus, 0),
+      paymentId: Math.random().toString(36).substring(2),
+      state: 'delivered'
+    })
 
-  const adminEmail = 'admin@' + config.get<string>('application.domain')
-  const orders = [
-    {
-      orderId: security.hash(adminEmail).slice(0, 4) + '-' + utils.randomHexString(16),
-      email: (adminEmail.replace(/[aeiou]/gi, '*')),
-      totalPrice: basket1Products[0].total + basket1Products[1].total,
-      bonus: basket1Products[0].bonus + basket1Products[1].bonus,
-      products: basket1Products,
-      eta: Math.floor((Math.random() * 5) + 1).toString(),
-      delivered: false
-    },
-    {
-      orderId: security.hash(adminEmail).slice(0, 4) + '-' + utils.randomHexString(16),
-      email: (adminEmail.replace(/[aeiou]/gi, '*')),
-      totalPrice: basket2Products[0].total,
-      bonus: basket2Products[0].bonus,
-      products: basket2Products,
-      eta: '0',
-      delivered: true
-    },
-    {
-      orderId: security.hash('demo').slice(0, 4) + '-' + utils.randomHexString(16),
-      email: 'd*m*',
-      totalPrice: basket3Products[0].total + basket3Products[1].total,
-      bonus: basket3Products[0].bonus + basket3Products[1].bonus,
-      products: basket3Products,
-      eta: '0',
-      delivered: true
-    }
-  ]
+    await ordersCollection.insert({
+      UserId: 2,
+      orderLines: basket2Products,
+      totalPrice: basket2Products.reduce((a, b) => a + b.total, 0),
+      bonus: basket2Products.reduce((a, b) => a + b.bonus, 0),
+      paymentId: Math.random().toString(36).substring(2),
+      state: 'processing'
+    })
 
-  return await Promise.all(
-    orders.map(({ orderId, email, totalPrice, bonus, products, eta, delivered }) =>
-      ordersCollection.insert({
-        orderId,
-        email,
-        totalPrice,
-        bonus,
-        products,
-        eta,
-        delivered
-      }).catch((err: unknown) => {
-        logger.error(`Could not insert Order ${orderId}: ${utils.getErrorMessage(err)}`)
-      })
-    )
-  )
+  } catch (err) {
+    logger.error(`Could not create Orders: ${utils.getErrorMessage(err)}`)
+  }
 }
 
+/* ---------------------------------------------------------
+   COMPLETED prepareFilesystem() (FULL WORKING VERSION)
+----------------------------------------------------------- */
 async function prepareFilesystem () {
-  replace({
-    regex: 'http://localhost:3000',
-    replacement: config.get<string>('server.baseUrl'),
-    paths: ['.well-known/csaf/provider-metadata.json'],
-    recursive: true,
-    silent: true
-  })
+  try {
+    replace({
+      regex: 'OWASP Juice Shop',
+      replacement: config.get('application.name'),
+      paths: ['frontend/dist'],
+      recursive: true,
+      silent: true
+    })
+
+    replace({
+      regex: 'OWASP_JUICE_SHOP',
+      replacement: config.get('application.name').replace(/ /g, '_').toUpperCase(),
+      paths: ['frontend/dist'],
+      recursive: true,
+      silent: true
+    })
+
+  } catch (err) {
+    logger.error(`Could not prepare file system: ${utils.getErrorMessage(err)}`)
+  }
 }
